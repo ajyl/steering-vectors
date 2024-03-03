@@ -1,21 +1,25 @@
 __version__ = "0.10.0"
 
-from .aggregators import (
+from steering_vectors.aggregators import (
     Aggregator,
     logistic_aggregator,
     mean_aggregator,
     pca_aggregator,
 )
-from .layer_matching import (
+from steering_vectors.layer_matching import (
     LayerMatcher,
     LayerType,
     ModelLayerConfig,
     get_num_matching_layers,
     guess_and_enhance_layer_config,
 )
-from .record_activations import record_activations
-from .steering_vector import PatchDeltaOperator, SteeringPatchHandle, SteeringVector
-from .train_steering_vector import (
+from steering_vectors.record_activations import record_activations
+from steering_vectors.steering_vector import (
+    PatchDeltaOperator,
+    SteeringPatchHandle,
+    SteeringVector,
+)
+from steering_vectors.train_steering_vector import (
     SteeringVectorTrainingSample,
     aggregate_activations,
     extract_activations,

@@ -2,6 +2,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from typing import Any, Callable, Generator, overload
 
+from tqdm import tqdm
 import torch
 from torch import Tensor, nn
 from torch.utils.hooks import RemovableHandle
@@ -80,8 +81,11 @@ class SteeringVector:
                 torch.logical_or(token_indices == 0, token_indices == 1)
             ), "token_indices tensor must be a mask (containing only 0s and 1s)"
         token_indices = (
-            token_indices if token_indices is not None else slice(min_token_index, None)
+            token_indices
+            if token_indices is not None
+            else slice(min_token_index, None)
         )
+
         layer_config = guess_and_enhance_layer_config(
             model, layer_config, self.layer_type
         )
@@ -101,7 +105,9 @@ class SteeringVector:
             handle = module.register_forward_hook(
                 # create the hook via function call since python only creates new scopes on functions
                 _create_additive_hook(
-                    target_activation.reshape(1, 1, -1), token_indices, operator
+                    target_activation.reshape(1, 1, -1),
+                    token_indices,
+                    operator,
                 )
             )
             hooks.append(handle)
@@ -116,6 +122,7 @@ class SteeringVector:
         multiplier: float = 1.0,
         min_token_index: int = 0,
         token_indices: list[int] | slice | Tensor | None = None,
+        num_timesteps: int = 0,
     ) -> Generator[None, None, None]:
         """
         Apply this steering vector to the given model. Tokens to patch
@@ -154,7 +161,10 @@ class SteeringVector:
 
     @overload
     def to(
-        self, dtype: torch.dtype, non_blocking: bool = False, copy: bool = False
+        self,
+        dtype: torch.dtype,
+        non_blocking: bool = False,
+        copy: bool = False,
     ) -> "SteeringVector":
         ...
 
@@ -186,6 +196,29 @@ class SteeringVector:
         }
         return replace(self, layer_activations=layer_activations)
 
+    def dump(self, filepath: str) -> None:
+        """
+        Save layer_activations.
+        """
+        torch.save(
+            {
+                "layer_activations": self.layer_activations,
+                "layer_type": self.layer_type,
+            },
+            filepath,
+        )
+
+    @classmethod
+    def load_from_file(cls, filepath: str) -> None:
+        """
+        Initialize layer_activations, layer_type from cached file.
+        """
+        cached = torch.load(filepath)
+        return cls(
+            layer_activations=cached["layer_activations"],
+            layer_type=cached["layer_type"],
+        )
+
 
 def _create_additive_hook(
     target_activation: Tensor,
@@ -211,3 +244,63 @@ def _create_additive_hook(
         return outputs
 
     return hook_fn
+
+
+def hooked_generate(
+    model,
+    tokenizer,
+    steering_vectors,
+    input_ids,
+    gen_timesteps,
+    multiplier,
+    **model_kwargs,
+):
+    """
+    Hmm.
+    """
+
+    eos_token_id_tensor = torch.tensor([tokenizer.eos_token_id]).to(
+        input_ids.device
+    )
+    unfinished_sequences = torch.ones(
+        input_ids.shape[0], dtype=torch.long, device=input_ids.device
+    )
+    for timestep in range(gen_timesteps):
+        handle = None
+        steering_vector = steering_vectors.get(timestep)
+        if steering_vector:
+           handle = steering_vector.patch_activations(
+               model, multiplier=multiplier.get(timestep, 0)
+           )
+
+        model_inputs = model.prepare_inputs_for_generation(
+            input_ids,
+            **model_kwargs,
+        )
+
+        with torch.inference_mode():
+            outputs = model.forward(
+                **model_inputs,
+            )
+
+        next_token_logits = outputs.logits[:, -1, :]
+        next_tokens = torch.argmax(next_token_logits, dim=-1)
+
+        input_ids = torch.cat([input_ids, next_tokens[:, None]], dim=-1)
+
+        model_kwargs = model._update_model_kwargs_for_generation(
+            outputs, model_kwargs, is_encoder_decoder=False
+        )
+
+        unfinished_sequences = unfinished_sequences.mul(
+            next_tokens.tile(eos_token_id_tensor.shape[0], 1)
+            .ne(eos_token_id_tensor.unsqueeze(1))
+            .prod(dim=0)
+        )
+        if handle is not None:
+            handle.remove()
+
+        if unfinished_sequences.max() == 0:
+            break
+
+    return input_ids
