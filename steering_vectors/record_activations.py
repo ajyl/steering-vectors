@@ -17,11 +17,12 @@ from .torch_utils import get_module, untuple_tensor
 @contextmanager
 def record_activations(
     model: nn.Module,
-    layer_type: LayerType = "decoder_block",
+    # layer_type: LayerType = "decoder_block",
+    layer_types: list[LayerType] = ["decoder_block"],
     layer_config: ModelLayerConfig | None = None,
     clone_activations: bool = True,
     layer_nums: Sequence[int] | None = None,
-) -> Generator[dict[int, list[Tensor]], None, None]:
+) -> Generator[dict[str, list[Tensor]], None, None]:
     """
     Record the model activations at each layer of type `layer_type`.
     This function will record every forward pass through the model
@@ -43,17 +44,30 @@ def record_activations(
     """
     recorded_activations: dict[int, list[Tensor]] = defaultdict(list)
     layer_config = guess_and_enhance_layer_config(model, layer_config)
-    if layer_type not in layer_config:
-        raise ValueError(f"layer_type {layer_type} not provided in layer config")
-    matcher = layer_config[layer_type]
-    matching_layers = collect_matching_layers(model, matcher)
+
+    matching_layers = []
+    for layer_type in layer_types:
+        if layer_type not in layer_config:
+            raise ValueError(
+                f"layer_type {layer_type} not provided in layer config"
+            )
+        matcher = layer_config[layer_type]
+        matching_layers.extend(collect_matching_layers(model, matcher))
     hooks: list[RemovableHandle] = []
-    for layer_num, layer_name in enumerate(matching_layers):
+    for layer_name in matching_layers:
+
+        try:
+            layer_num = int(layer_name.split(".")[2])
+        except:
+            breakpoint()
+
         if layer_nums is not None and layer_num not in layer_nums:
             continue
         module = get_module(model, layer_name)
         hook_fn = _create_read_hook(
-            layer_num, recorded_activations, clone_activations=clone_activations
+            layer_name,
+            recorded_activations,
+            clone_activations=clone_activations,
         )
         hooks.append(module.register_forward_hook(hook_fn))
     try:
@@ -64,9 +78,9 @@ def record_activations(
 
 
 def _create_read_hook(
-    layer_num: int, records: dict[int, list[Tensor]], clone_activations: bool
+    layer_name: str, records: dict[int, list[Tensor]], clone_activations: bool
 ) -> Any:
-    """Create a hook function that records the model activation at layer_num"""
+    """Create a hook function that records the model activation at :layer_name:"""
 
     def hook_fn(_m: Any, _inputs: Any, outputs: Any) -> Any:
         activation = untuple_tensor(outputs)
@@ -76,7 +90,7 @@ def _create_read_hook(
             )
         if clone_activations:
             activation = activation.clone().detach()
-        records[layer_num].append(activation)
+        records[layer_name].append(activation)
         return outputs
 
     return hook_fn
