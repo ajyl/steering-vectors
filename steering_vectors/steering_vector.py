@@ -6,6 +6,7 @@ from tqdm import tqdm
 import torch
 from torch import Tensor, nn
 from torch.utils.hooks import RemovableHandle
+from transformers.generation.logits_process import NoRepeatNGramLogitsProcessor
 
 from .layer_matching import (
     LayerType,
@@ -265,25 +266,50 @@ def hooked_generate(
     unfinished_sequences = torch.ones(
         input_ids.shape[0], dtype=torch.long, device=input_ids.device
     )
+    ngram_processor = NoRepeatNGramLogitsProcessor(3)
     for timestep in range(gen_timesteps):
         handle = None
+        # if timestep == 0:
+        #    steering_vector = steering_vectors[0]
+        # else:
+        #    steering_vector = steering_vectors[2]
         steering_vector = steering_vectors.get(timestep)
-        if steering_vector:
-           handle = steering_vector.patch_activations(
-               model, multiplier=multiplier.get(timestep, 0)
-           )
+
+        # if steering_vector is None:
+        #    steering_vectors.get(19)
+
+        if steering_vector is not None:
+
+            # if timestep == 0:
+            #    steering_vector.layer_activations.pop(23)
+
+            handle = steering_vector.patch_activations(
+                model, multiplier=multiplier.get(timestep, 0)
+            )
 
         model_inputs = model.prepare_inputs_for_generation(
             input_ids,
             **model_kwargs,
         )
 
+        model_inputs["use_cache"] = False
+
         with torch.inference_mode():
             outputs = model.forward(
                 **model_inputs,
+                # use_cache=False,
             )
 
-        next_token_logits = outputs.logits[:, -1, :]
+        next_token_logits = outputs.logits[:, -1, :].clone()
+
+        # next_tokens_scores = ngram_processor(input_ids, next_token_logits)
+
+        if timestep == 0:
+            # " The"
+            next_token_logits[:, 383] = -1e10
+        #    # " Here"
+        #    #next_token_logits[:, 3423] = -1e10
+
         next_tokens = torch.argmax(next_token_logits, dim=-1)
 
         input_ids = torch.cat([input_ids, next_tokens[:, None]], dim=-1)

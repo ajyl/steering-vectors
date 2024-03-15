@@ -16,8 +16,7 @@ from matplotlib.gridspec import GridSpec
 from ift.interp_utils import get_model_and_tokenizer, load_steer_vecs
 
 
-def check_steer_vec_direction_vocab(config):
-    steer_vecs = load_steer_vecs("steer_vec_series.pt")
+def check_steer_vec_direction_vocab(steer_vecs, config):
     model, tokenizer = get_model_and_tokenizer(
         config["model"], config["tokenizer"]
     )
@@ -40,7 +39,11 @@ def check_steer_vec_direction_vocab(config):
             unembed_vd.transpose(0, 1),
         )
         top_vocabs_lk = dot_prods_lv.topk(k=k, dim=1).indices
-        top_tokens = tokenizer.batch_decode(top_vocabs_lk)
+
+        for layer in range(24):
+            print(f"Layer {layer}")
+            top_tokens = tokenizer.batch_decode(top_vocabs_lk[layer])
+            print(top_tokens)
 
         dot_prods_lv = einsum(
             "layer d_model, d_model vocab -> layer vocab",
@@ -74,8 +77,8 @@ def steer_vec_cos_sim_per_timestep(steer_vecs, config):
     steer_vecs_tld = torch.stack(steer_vec_per_timestep, dim=0)
 
     fig = plt.figure(figsize=(12, 12))
-    num_cols = 2
-    gs = GridSpec(3, num_cols)
+    num_cols = 5
+    gs = GridSpec(4, num_cols)
     for timestep in range(steer_vecs_tld.shape[0]):
         curr_row = timestep // num_cols
         curr_col = timestep % num_cols
@@ -373,6 +376,31 @@ def steer_vec_vs_component_shift(steer_vecs, config, component):
 
     fig.savefig(f"components_vs_steer_vecs_{component}.png")
 
+def svd(steer_vecs, config):
+    """
+    Try svd...
+    """
+    steer_vec_per_timestep = []
+    for timestep in steer_vecs.keys():
+
+        steer_vec_ld = torch.stack(
+            [
+                steer_vecs[timestep].layer_activations[layer]
+                for layer in range(24)
+            ],
+            dim=0,
+        )
+        steer_vec_per_timestep.append(steer_vec_ld)
+
+    steer_vecs_tld = torch.stack(steer_vec_per_timestep, dim=0)
+
+    _steer_vecs = steer_vecs_tld.view((-1, steer_vecs_tld.shape[-1]))
+    svd = torch.linalg.svd(_steer_vecs.tranpose(0, 1))
+
+    svd_U = svd.U # [1024, 1024]
+    return svd_U
+
+
 
 def main():
     """ Driver """
@@ -393,20 +421,22 @@ def main():
         "ift_state_dict": "/home/repos/ift_mechinterp/finetune/.cache/andrew/gpt2_ift/LATEST/ift_model.pt",
         "ift_model_path": "/home/repos/ift_mechinterp/ift_gpt2_latest",
         "tokenizer": "gpt2-medium",
-        "steer_timesteps": 5,
+        "steer_timesteps": 20,
         "ckpt_dir": "/home/repos/steering-vectors/ckpts/",
     }
-    # check_steer_vec_direction_vocab(config)
     steer_vecs = load_steer_vecs(
-        os.path.join(config["ckpt_dir"], "steer_vec_series.pt")
+        os.path.join(config["ckpt_dir"], "steer_vec_series_longer.pt")
     )
-    # steer_vec_cos_sim_per_timestep(steer_vecs, config)
-    # steer_vec_cos_sim_across_timesteps(steer_vecs, config)
+    #check_steer_vec_direction_vocab(steer_vecs, config)
+    #steer_vec_cos_sim_per_timestep(steer_vecs, config)
+    #steer_vec_cos_sim_across_timesteps(steer_vecs, config)
 
     # unembed_shift_vs_component_shift(config, "mlp.w_out")
     # steer_vec_vs_component_shift(steer_vecs, config, "mlp.w_in")
-    steer_vec_vs_component_shift(steer_vecs, config, "attn_o")
-    steer_vec_vs_component_shift(steer_vecs, config, "attn_v")
+    #steer_vec_vs_component_shift(steer_vecs, config, "attn_o")
+    #steer_vec_vs_component_shift(steer_vecs, config, "attn_v")
+
+    svd(steer_vecs, config)
 
 
 if __name__ == "__main__":

@@ -423,16 +423,16 @@ def main():
     train_data = tokenize_data(train_data, config)
     valid_data = tokenize_data(valid_data, config)
 
-    steer_vecs = get_steer_vector(train_data, config)
+    #steer_vecs = get_steer_vector(train_data, config)
 
-    save_steer_vecs(steer_vecs, "steer_vec_series_longer.pt")
+    #save_steer_vecs(steer_vecs, "steer_vec_series_longer.pt")
     # steer_vec.dump("steer_vec_series.pt")
 
     # steer_vec = SteeringVector.load_from_file("steer_vec_series.pt")
-    #steer_vecs = load_steer_vecs("steer_vec_series.pt")
+    steer_vecs = load_steer_vecs("steer_vec_series_longer.pt")
     # steer(steer_vec, valid_data, config)
 
-    # deepdive(steer_vecs, valid_data, config)
+    deepdive(steer_vecs, valid_data, config)
     #testing_hooked_generate(steer_vecs, valid_data, config)
 
 
